@@ -26,11 +26,17 @@ use Illuminate\Support\Facades\Log;
 
 class IntendServiceGuzzle
 {
+    protected string $member_auth_url;
+    protected string $request_url;
+    protected Client $client;
+    protected string $secret_key;
+
     public function __construct()
     {
-        $this->client      = new Client();
-        $this->request_url = 'https://pay.intend.uz/api/v1/external';
-        $this->secret_key  = env('INTEND_SECRET_KEY');
+        $this->client          = new Client();
+        $this->request_url     = 'https://pay.intend.uz/api/v1/external';
+        $this->member_auth_url = 'https://pay.intend.uz/api/v1/external/member/auth';
+        $this->secret_key      = env('INTEND_SECRET_KEY');
     }
 
     public function getPriceIntend($product_id, $product_price, $supplier_api_key, $per_month = false, $price_intend = false): array|int
@@ -74,7 +80,68 @@ class IntendServiceGuzzle
 
     }
 
+    public function getUserTokenNoPasswords($phone, $api_key, $status = false, $user_id = false)
+    {
+        if ($status === false && session()->has('intend_token')) {
+            return session()->get('intend_token');
+        }
+        if ($status === true) {
+            session()->forget('intend_token');
+        }
+        try {
+            $response = $this->client->post($this->member_auth_url, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept'       => 'application/json',
+                    'api-key'      => $api_key,
+                ],
+                'json'    => [
+                    'username' => $phone,
+                    'token'    => hash('sha512', $phone.'$'.$this->secret_key),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error($e->getMessage());
+        }
+        $json = json_decode($response->getBody()->getContents(), true);
 
+        if (isset($json['data']['token'])) {
+            session()->put('intend_token', $json['data']['token']);
+
+            if ($user_id !== false) {
+                return $json['data']['id'];
+            }
+
+            return $json['data']['token'];
+        }
+
+        return false;
+
+    }
+
+    public function userCheckLimit($token, $api_key)
+    {
+        if (session()->has('intend_limit')) {
+            return session()->get('intend_limit') / 100;
+        }
+
+        $response = $this->client->get($this->request_url.'/member/limits', [
+            'headers' => [
+                'Content-Type'  => 'application/json',
+                'Accept'        => 'application/json',
+                'Authorization' => 'Bearer '.$token,
+                'api-key'       => $api_key,
+            ],
+        ]);
+        $json     = json_decode($response->getBody()->getContents(), true);
+        if (isset($json['data']['limit'])) {
+            session()->put('intend_limit', $json['data']['limit']);
+
+            return $json['data']['limit'] / 100;
+        }
+
+        return false;
+    }
 
 
 }
